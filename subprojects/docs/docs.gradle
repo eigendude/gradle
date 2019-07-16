@@ -284,7 +284,7 @@ def dslHtml = tasks.register("dslHtml", Docbook2Xhtml) {
 def userguideFlattenSources = tasks.register("userguideFlattenSources", Sync) {
     dependsOn css, samples, defaultImports
     finalizedBy("checkDeadInternalLinks")
-    
+
     duplicatesStrategy = DuplicatesStrategy.FAIL
     into("${buildDir}/userguide-resources")
     from("src/docs/css") {
@@ -304,8 +304,13 @@ def userguideFlattenSources = tasks.register("userguideFlattenSources", Sync) {
     }.files
 }
 
-def userguideSinglePage = tasks.register("userguideSinglePage", CacheableAsciidoctorTask) {
+def checkDeadLinks = tasks.register("checkDeadInternalLinks", org.gradle.gradlebuild.docs.FindBrokenInternalLinks) {
     dependsOn(userguideFlattenSources)
+    inputDirectory.set(userguideFlattenSources.get().destinationDir)
+}
+
+def userguideSinglePage = tasks.register("userguideSinglePage", CacheableAsciidoctorTask) {
+    dependsOn(checkDeadLinks)
     sourceDir = userguideFlattenSources.get().destinationDir
     sources { include 'userguide_single.adoc' }
     outputDir = userguideSinglePageOutputDir
@@ -336,7 +341,7 @@ def javadocAll = tasks.register("javadocAll", Javadoc) {
     options.addStringOption "stylesheetfile", stylesheetFile.absolutePath
     options.addStringOption "source", "8"
     source ProjectGroups.INSTANCE.getPublicJavaProjects(project).collect { project -> project.sourceSets.main.allJava }
-    destinationDir = new File(docsDir, 'javadoc') 
+    destinationDir = new File(docsDir, 'javadoc')
     classpath = configurations.gradleApiRuntime
 
     PublicApi.includes.each {
@@ -360,7 +365,7 @@ def javadocAll = tasks.register("javadocAll", Javadoc) {
 
             // Commit http://hg.openjdk.java.net/jdk/jdk/rev/89dc31d7572b broke use of JSZip (https://bugs.openjdk.java.net/browse/JDK-8214856) fixed in Java 12 by http://hg.openjdk.java.net/jdk/jdk/rev/b4982a22926b
             // TODO: Remove this script.js workaround when we distribute Gradle using JDK 12 or higher
-            project.copy { 
+            project.copy {
             	from(new File(srcDocsDir, "js/javadoc"))
                 into(destinationDir)
             }
@@ -420,7 +425,7 @@ tasks.withType(CacheableAsciidoctorTask).configureEach {
 }
 
 def userguideMultiPage = tasks.register("userguideMultiPage", CacheableAsciidoctorTask) {
-    dependsOn(userguideFlattenSources)
+    dependsOn(checkDeadLinks)
     sourceDir = userguideFlattenSources.get().destinationDir
 
     sources {
@@ -542,9 +547,4 @@ tasks.register("docsZip", Zip) {
     // TODO: Reduce duplication
     from(docsDir)
     dependsOn 'javadocAll', 'userguide', 'dslHtml', 'releaseNotes'
-}
-
-tasks.register("checkDeadInternalLinks", org.gradle.gradlebuild.docs.FindBrokenInternalLinks) {
-    dependsOn(userguideFlattenSources)
-    inputDirectory.set(userguideFlattenSources.get().destinationDir)
 }
