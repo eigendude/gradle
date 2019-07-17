@@ -47,11 +47,12 @@ public class SettingsFactory {
                                            Map<String, String> gradleProperties, StartParameter startParameter,
                                            ClassLoaderScope buildRootClassLoaderScope) {
 
-        ClassLoaderScope settingsClassLoaderScope = buildRootClassLoaderScope.deprecated().createChild("settings");
+        ClassLoaderScope deprecatedBuildRootScope = buildRootClassLoaderScope.deprecated();
+        ClassLoaderScope settingsClassLoaderScope = deprecatedBuildRootScope.createChild("settings");
         ScriptHandlerInternal settingsScriptHandler = scriptHandlerFactory.create(settingsScript, settingsClassLoaderScope);
         DefaultSettings settings = instantiator.newInstance(DefaultSettings.class,
             serviceRegistryFactory, gradle,
-            settingsClassLoaderScope, buildRootClassLoaderScope, settingsScriptHandler,
+            settingsClassLoaderScope, deprecatedBuildRootScope, settingsScriptHandler,
             settingsDir, settingsScript, startParameter
         );
 
