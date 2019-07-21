@@ -47,6 +47,8 @@ public class DurationMeasurementImpl implements DurationMeasurement {
      */
     public static void cleanup() {
         runJvmGc();
+        sync();
+        compactMemory();
     }
 
     /**
@@ -56,6 +58,20 @@ public class DurationMeasurementImpl implements DurationMeasurement {
         System.gc();
         System.runFinalization();
         System.gc();
+    }
+
+    /**
+     * Write all buffered file metadata and data modifications to the file systems.
+     */
+    public static void sync() {
+        executeProcess("sync");
+    }
+
+    /**
+     * Compact all zones such that free memory is available in contiguous blocks.
+     */
+    private static void compactMemory() {
+        executeProcess("sudo sysctl vm.compact_memory=1");
     }
 
     /**
