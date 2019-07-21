@@ -18,6 +18,7 @@ package org.gradle.performance.fixture;
 
 import org.gradle.api.Action;
 import org.gradle.internal.concurrent.CompositeStoppable;
+import org.gradle.internal.os.OperatingSystem;
 import org.gradle.performance.measure.MeasuredOperation;
 import org.gradle.performance.results.MeasuredOperationList;
 import org.gradle.util.GFileUtils;
@@ -26,6 +27,9 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import static org.gradle.performance.fixture.DurationMeasurementImpl.executeProcess;
+import static org.gradle.performance.fixture.DurationMeasurementImpl.sync;
 
 public class BuildExperimentRunner {
 
@@ -70,8 +74,10 @@ public class BuildExperimentRunner {
             GradleSession session = executerProvider.session(buildSpec);
             session.prepare();
             try {
+                beforeIterations();
                 performMeasurements(session, experiment, results, workingDirectory);
             } finally {
+                afterIterations();
                 CompositeStoppable.stoppable(profiler).stop();
                 session.cleanup();
             }
@@ -96,6 +102,9 @@ public class BuildExperimentRunner {
         for (int i = 0; i < invocationCount; i++) {
             System.out.println();
             System.out.println(String.format("Test run #%s", i + 1));
+
+            displayInfo();
+
             BuildExperimentInvocationInfo info = new DefaultBuildExperimentInvocationInfo(experiment, projectDir, Phase.MEASUREMENT, i + 1, invocationCount);
             runOnce(session, results, info);
         }
@@ -128,6 +137,92 @@ public class BuildExperimentRunner {
             BuildExperimentInvocationInfo info = new DefaultBuildExperimentInvocationInfo(experiment, projectDir, Phase.WARMUP, i + 1, warmUpCount);
             runOnce(session, new MeasuredOperationList(), info);
         }
+    }
+
+    private static void beforeIterations() {
+        if (!OperatingSystem.current().isLinux()) {
+            return;
+        }
+        // TODO try setting the max cpu speed to the minimum instead of https://github.com/gradle/dev-infrastructure/pull/269/files - https://askubuntu.com/questions/1057710/change-min-and-max-cpu-frequency
+        setOSSchedulerStates(false);
+        stabilizeSystem();
+        dropFileCaches();
+
+        assertOSPerformanceSettings();
+
+        executeProcess("sudo systemctl stop NetworkManager");
+    }
+
+
+    private static void assertOSPerformanceSettings() {
+        assert executeProcess("cat /etc/default/cpufrequtils").contains("performance"); // CPU should not be in powersave - https://github.com/gradle/dev-infrastructure/pull/269/files
+        // assert executeProcess("cat /proc/cmdline").contains("intel_pstate=disable"); // https://github.com/softdevteam/krun#step-2-linux-only-kernel-and-os-setup
+        assert executeProcess("cat /sys/devices/system/cpu/isolated").contains("0-3"); // https://vstinner.github.io/journey-to-stable-benchmark-system.html#cpu-isolation
+    }
+
+    /**
+     * Show the currently running services, CPU speeds, temperatures, free space, etc.
+     */
+    private static void displayInfo() {
+        System.out.println(executeProcess("sensors | grep 'Core '"));
+        System.out.println(executeProcess("lscpu | grep 'CPU MHz:'"));
+        System.out.println(executeProcess("free"));
+        System.out.println(executeProcess("df --human-readable "));
+        System.out.println(executeProcess("systemctl | grep 'running'"));
+    }
+
+    /**
+     * Disable swap completely, auditing, turbo boost, etc.
+     */
+    private static void stabilizeSystem() {
+        System.out.println(executeProcess("sudo swapoff --all --verbose")); // Disable devices and files for paging and swapping.
+
+        System.out.println(executeProcess("sudo sysctl vm.overcommit_memory=2")); // disable overcommit, see https://github.com/softdevteam/krun/blob/da9e46f1207a4ba99df6ae896f8fc24036b648dc/krun/platform.py#L1401
+        System.out.println(executeProcess("sudo sysctl --write kernel.randomize_va_space=2"));
+        // address space layout randomization, see https://github.com/softdevteam/krun/blob/da9e46f1207a4ba99df6ae896f8fc24036b648dc/krun/platform.py#L1267
+        // TODO experiment with disabling ASLR, too
+
+        // TODO clearTemp();
+
+        // TODO executeProcess("sudo systemctl disable turbo-boost.service") // make cpu and temp more consistent
+        // TODO executeProcess("sudo systemctl disable auditd") // disable the Linux Auditing System
+    }
+
+    /**
+     * Clear PageCache, dentries and inodes.
+     */
+    private static void dropFileCaches() {
+        System.out.println("Dropping file caches");
+        sync();
+        executeProcess("sudo sysctl vm.drop_caches=3");
+    }
+
+    /**
+     * Clear leftover temporary Gradle files.
+     */
+    private static void clearTemp() {
+        System.out.println("Clearing temp directory");
+        executeProcess("sudo rm -rfd /tmp/*gradle*");
+    }
+
+    private static void afterIterations() {
+        if (!OperatingSystem.current().isLinux()) {
+            return;
+        }
+
+        executeProcess("sudo systemctl start NetworkManager");
+        setOSSchedulerStates(true);
+    }
+
+    /**
+     * Temporarily disable cron and atd to make sure nothing unexpected happens during benchmarking.
+     * See: https://github.com/softdevteam/krun#step-4-audit-system-services
+     */
+    private static void setOSSchedulerStates(boolean enabled) {
+        String command = enabled ? "start" : "stop";
+        System.out.println(String.format("Cron & Atd will %s now.", command));
+        executeProcess(String.format("sudo systemctl %s cron", command)); // daemon to execute scheduled commands
+        executeProcess(String.format("sudo systemctl %s atd", command)); // run jobs queued for later execution
     }
 
     private static String getExperimentOverride(String key) {
